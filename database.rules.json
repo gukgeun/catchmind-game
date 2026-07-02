@@ -1,0 +1,20 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+
+    "rooms": {
+      "$roomCode": {
+        ".read": "auth != null",
+        ".write": "auth != null"
+      }
+    },
+
+    "secretWords": {
+      "$roomCode": {
+        ".read": "auth != null && auth.uid == root.child('rooms/' + $roomCode + '/turn/drawerUid').val()",
+        ".write": "auth != null && auth.uid == root.child('rooms/' + $roomCode + '/turn/drawerUid').val()"
+      }
+    }
+  }
+}
