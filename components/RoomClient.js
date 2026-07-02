@@ -347,8 +347,8 @@ export default function RoomClient({ code }) {
   const rightPlayers = playersSorted.slice(8, 16);
 
   return (
-    <div className="flex min-h-screen flex-col bg-gradient-to-br from-violet-100 via-fuchsia-50 to-orange-50">
-      <header className="flex items-center justify-between gap-3 px-4 py-3">
+    <div className="flex h-dvh flex-col overflow-hidden bg-gradient-to-br from-violet-100 via-fuchsia-50 to-orange-50">
+      <header className="flex shrink-0 flex-wrap items-center justify-between gap-2 px-3 py-2 sm:px-4 sm:py-3">
         <div className="flex items-center gap-2">
           <span className="text-2xl">🎨</span>
           <button
@@ -400,8 +400,8 @@ export default function RoomClient({ code }) {
         </div>
       </header>
 
-      <main className="flex flex-1 flex-col gap-3 px-4 pb-4 lg:flex-row">
-        <aside className="order-2 lg:order-1 lg:w-56">
+      <main className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-3 pb-3 sm:px-4 sm:pb-4 md:flex-row md:overflow-hidden">
+        <aside className="order-2 shrink-0 md:order-1 md:h-full md:w-40 md:overflow-y-auto lg:w-56">
           <ParticipantList
             players={leftPlayers}
             drawerUid={turn?.drawerUid}
@@ -410,7 +410,7 @@ export default function RoomClient({ code }) {
           />
         </aside>
 
-        <section className="order-1 flex flex-1 flex-col gap-3 lg:order-2">
+        <section className="order-1 flex min-h-0 flex-1 flex-col gap-3 md:order-2 md:h-full">
           {meta.status === "waiting" ? (
             <LobbyPanel isHost={isHost} playerCount={playersSorted.length} />
           ) : (
@@ -425,18 +425,20 @@ export default function RoomClient({ code }) {
                 onClearAll={() => setClearSignal((n) => n + 1)}
                 disabled={!isDrawer || turn?.ended}
               />
-              <DrawingCanvas
-                roomCode={code}
-                turnIndex={turn?.turnIndex}
-                isDrawer={isDrawer && !turn?.ended}
-                tool={tool}
-                color={color}
-                brushSize={brushSize}
-                clearSignal={clearSignal}
-              />
+              <div className="shrink-0">
+                <DrawingCanvas
+                  roomCode={code}
+                  turnIndex={turn?.turnIndex}
+                  isDrawer={isDrawer && !turn?.ended}
+                  tool={tool}
+                  color={color}
+                  brushSize={brushSize}
+                  clearSignal={clearSignal}
+                />
+              </div>
             </>
           )}
-          <div className="h-56 lg:h-64">
+          <div className="min-h-[14rem] shrink-0 md:min-h-0 md:flex-1">
             <ChatPanel
               roomCode={code}
               turnIndex={turn?.turnIndex ?? 0}
@@ -450,7 +452,7 @@ export default function RoomClient({ code }) {
           </div>
         </section>
 
-        <aside className="order-3 lg:w-56">
+        <aside className="order-3 shrink-0 md:h-full md:w-40 md:overflow-y-auto lg:w-56">
           <ParticipantList
             players={rightPlayers}
             drawerUid={turn?.drawerUid}

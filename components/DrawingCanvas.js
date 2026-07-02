@@ -164,11 +164,18 @@ export default function DrawingCanvas({ roomCode, turnIndex, isDrawer, tool, col
   }, [clearSignal]);
 
   return (
-    <div className="relative w-full overflow-hidden rounded-2xl border-4 border-slate-200 bg-white shadow-inner">
+    <div className="flex w-full justify-center overflow-hidden">
       <canvas
         ref={canvasRef}
-        className={`block w-full ${isDrawer ? "cursor-crosshair" : "cursor-not-allowed"}`}
-        style={{ aspectRatio: `${CANVAS_WIDTH} / ${CANVAS_HEIGHT}`, touchAction: "none" }}
+        className={`block max-w-full rounded-2xl border-4 border-slate-200 bg-white shadow-inner ${
+          isDrawer ? "cursor-crosshair" : "cursor-not-allowed"
+        }`}
+        style={{
+          aspectRatio: `${CANVAS_WIDTH} / ${CANVAS_HEIGHT}`,
+          width: "100%",
+          maxHeight: "52vh",
+          touchAction: "none",
+        }}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
