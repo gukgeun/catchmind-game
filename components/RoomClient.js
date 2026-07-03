@@ -26,6 +26,7 @@ import {
   isCorrectGuess,
   sortPlayersByOrder,
   pickNextDrawerUid,
+  computeWinners,
 } from "@/lib/gameConfig";
 import { getRandomWord } from "@/lib/wordList";
 import DrawingCanvas from "@/components/DrawingCanvas";
@@ -96,6 +97,7 @@ export default function RoomClient({ code }) {
   const isHost = Boolean(uid && meta && uid === meta.hostUid);
   const isDrawer = Boolean(uid && turn && uid === turn.drawerUid);
   const isPlaying = meta?.status === "playing" && turn;
+  const isEnded = meta?.status === "ended";
 
   // --- fetch the secret word: security rules only allow the current drawer to read this path ---
   useEffect(() => {
@@ -160,6 +162,24 @@ export default function RoomClient({ code }) {
   useEffect(() => {
     if (!turn || !turn.ended || meta?.status !== "playing") return;
 
+    // one full round (every player got a turn) has been completed: end the game
+    if (meta.roundLength && turn.turnIndex >= meta.roundLength) {
+      if (uid !== meta.hostUid) return;
+      const timer = setTimeout(async () => {
+        const snap = await get(ref(db, `rooms/${code}/meta`));
+        const current = snap.val();
+        if (!current || current.status !== "playing") return; // already finalized
+        const freshPlayersSnap = await get(ref(db, `rooms/${code}/players`));
+        const winners = computeWinners(freshPlayersSnap.val() || {});
+        await update(ref(db, `rooms/${code}/meta`), {
+          status: "ended",
+          winnerNames: winners.map((w) => w.name).join(", "),
+          winnerScore: winners[0]?.score ?? 0,
+        });
+      }, REVEAL_DELAY_MS);
+      return () => clearTimeout(timer);
+    }
+
     const nextDrawerUid = pickNextDrawerUid(players, turn.drawerUid);
     if (!nextDrawerUid) return;
 
@@ -216,7 +236,7 @@ export default function RoomClient({ code }) {
       timers.forEach(clearTimeout);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [turn?.ended, turn?.turnIndex, meta?.status, code]);
+  }, [turn?.ended, turn?.turnIndex, meta?.status, meta?.roundLength, code]);
 
   // --- whenever this client becomes the drawer for a turn with no word chosen yet, pick one ---
   useEffect(() => {
@@ -251,6 +271,7 @@ export default function RoomClient({ code }) {
 
   async function handleStartGame() {
     if (!isHost || playersSorted.length < 2) return;
+    const roundLength = playersSorted.filter((p) => p.online).length || playersSorted.length;
     // the host always draws first turn 1, since a player can only write their own
     // secret word once security rules recognize them as the current drawer
     await update(ref(db, `rooms/${code}/turn`), {
@@ -265,12 +286,37 @@ export default function RoomClient({ code }) {
       revealedWord: null,
       winnerUid: null,
     });
-    await update(ref(db, `rooms/${code}/meta`), { status: "playing" });
+    await update(ref(db, `rooms/${code}/meta`), {
+      status: "playing",
+      roundLength,
+      winnerNames: null,
+      winnerScore: null,
+    });
   }
 
   async function handleEndGame() {
     if (!isHost) return;
-    await update(ref(db, `rooms/${code}/meta`), { status: "waiting" });
+    await update(ref(db, `rooms/${code}/meta`), {
+      status: "waiting",
+      roundLength: null,
+      winnerNames: null,
+      winnerScore: null,
+    });
+  }
+
+  async function handleRestart() {
+    if (!isHost) return;
+    const scoreResets = {};
+    Object.keys(players).forEach((pUid) => {
+      scoreResets[`players/${pUid}/score`] = 0;
+    });
+    await update(ref(db, `rooms/${code}`), {
+      ...scoreResets,
+      "meta/status": "waiting",
+      "meta/roundLength": null,
+      "meta/winnerNames": null,
+      "meta/winnerScore": null,
+    });
   }
 
   function handleLeave() {
@@ -364,7 +410,7 @@ export default function RoomClient({ code }) {
           </span>
         </div>
 
-        <WordBanner turn={turn} isDrawer={isDrawer} isPlaying={isPlaying} secretWord={secretWord} />
+        <WordBanner turn={turn} isDrawer={isDrawer} isPlaying={isPlaying} isEnded={isEnded} secretWord={secretWord} />
 
         <div className="flex items-center gap-2">
           {turn && meta.status === "playing" && (
@@ -414,6 +460,14 @@ export default function RoomClient({ code }) {
         <section className="order-1 flex flex-1 flex-col gap-3 md:order-2">
           {meta.status === "waiting" ? (
             <LobbyPanel isHost={isHost} playerCount={playersSorted.length} />
+          ) : meta.status === "ended" ? (
+            <EndedPanel
+              winnerNames={meta.winnerNames}
+              winnerScore={meta.winnerScore}
+              players={playersSorted}
+              isHost={isHost}
+              onRestart={handleRestart}
+            />
           ) : (
             <>
               <Toolbar
@@ -468,7 +522,10 @@ export default function RoomClient({ code }) {
   );
 }
 
-function WordBanner({ turn, isDrawer, isPlaying, secretWord }) {
+function WordBanner({ turn, isDrawer, isPlaying, isEnded, secretWord }) {
+  if (isEnded) {
+    return <div className="text-sm font-bold text-amber-500">🏆 게임 종료</div>;
+  }
   if (!isPlaying) {
     return <div className="text-sm font-bold text-slate-400">게임 대기 중</div>;
   }
@@ -521,6 +578,49 @@ function LobbyPanel({ isHost, playerCount }) {
         <p className="text-sm font-semibold text-violet-500">우측 상단의 &apos;게임 시작&apos; 버튼을 눌러주세요</p>
       ) : (
         <p className="text-sm font-semibold text-slate-400">방장이 게임을 시작할 때까지 기다려주세요</p>
+      )}
+    </div>
+  );
+}
+
+function EndedPanel({ winnerNames, winnerScore, players, isHost, onRestart }) {
+  const ranked = [...players].sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+
+  return (
+    <div className="flex flex-1 flex-col items-center justify-center gap-4 rounded-2xl bg-white/80 p-8 text-center shadow-inner">
+      <div className="text-6xl">🎉</div>
+      <h2 className="text-2xl font-black text-slate-800">
+        승자는 {winnerNames || "-"}님입니다! 축하합니다!
+      </h2>
+      {typeof winnerScore === "number" && (
+        <p className="text-sm font-bold text-amber-500">{winnerScore}문제 정답</p>
+      )}
+
+      <ul className="mt-2 w-full max-w-xs space-y-1.5">
+        {ranked.map((p, i) => (
+          <li
+            key={p.uid}
+            className={`flex items-center justify-between rounded-xl px-4 py-2 text-sm font-bold ${
+              i === 0 ? "bg-amber-100 text-amber-700" : "bg-slate-50 text-slate-600"
+            }`}
+          >
+            <span>
+              {i + 1}위 {p.name}
+            </span>
+            <span>{p.score ?? 0}점</span>
+          </li>
+        ))}
+      </ul>
+
+      {isHost ? (
+        <button
+          onClick={onRestart}
+          className="mt-2 rounded-full bg-gradient-to-r from-violet-500 to-fuchsia-500 px-6 py-3 text-base font-black text-white shadow-lg hover:brightness-110"
+        >
+          새 게임 시작
+        </button>
+      ) : (
+        <p className="mt-2 text-sm font-semibold text-slate-400">방장이 새 게임을 시작할 때까지 기다려주세요</p>
       )}
     </div>
   );
