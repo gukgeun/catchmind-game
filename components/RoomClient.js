@@ -55,6 +55,7 @@ export default function RoomClient({ code }) {
   const [color, setColor] = useState("#111827");
   const [brushSize, setBrushSize] = useState(6);
   const [clearSignal, setClearSignal] = useState(0);
+  const [undoSignal, setUndoSignal] = useState(0);
 
   const endedRef = useRef(false);
   const serverOffsetRef = useRef(0);
@@ -423,6 +424,7 @@ export default function RoomClient({ code }) {
                 brushSize={brushSize}
                 setBrushSize={setBrushSize}
                 onClearAll={() => setClearSignal((n) => n + 1)}
+                onUndo={() => setUndoSignal((n) => n + 1)}
                 disabled={!isDrawer || turn?.ended}
               />
               <div className="shrink-0">
@@ -434,6 +436,7 @@ export default function RoomClient({ code }) {
                   color={color}
                   brushSize={brushSize}
                   clearSignal={clearSignal}
+                  undoSignal={undoSignal}
                 />
               </div>
             </>

@@ -15,7 +15,17 @@ const COLORS = [
 
 const SIZES = [3, 6, 12, 20];
 
-export default function Toolbar({ tool, setTool, color, setColor, brushSize, setBrushSize, onClearAll, disabled }) {
+export default function Toolbar({
+  tool,
+  setTool,
+  color,
+  setColor,
+  brushSize,
+  setBrushSize,
+  onClearAll,
+  onUndo,
+  disabled,
+}) {
   return (
     <div
       className={`flex flex-wrap items-center gap-3 rounded-2xl bg-white/90 px-4 py-3 shadow ${
@@ -92,6 +102,15 @@ export default function Toolbar({ tool, setTool, color, setColor, brushSize, set
         }`}
       >
         지우개
+      </button>
+
+      <button
+        type="button"
+        onClick={onUndo}
+        title="마지막 동작 실행취소"
+        className="rounded-full bg-slate-100 px-3 py-1.5 text-sm font-bold text-slate-600 transition hover:bg-slate-200"
+      >
+        ↩️ 실행취소
       </button>
 
       <button

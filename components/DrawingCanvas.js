@@ -1,14 +1,23 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { ref, push, set, update, onChildAdded, onChildChanged, off } from "firebase/database";
+import { ref, push, set, update, remove, onChildAdded, onChildChanged, onChildRemoved, off } from "firebase/database";
 import { db } from "@/lib/firebase";
 
 const CANVAS_WIDTH = 900;
 const CANVAS_HEIGHT = 560;
 const MOVE_THROTTLE_MS = 45;
 
-export default function DrawingCanvas({ roomCode, turnIndex, isDrawer, tool, color, brushSize, clearSignal }) {
+export default function DrawingCanvas({
+  roomCode,
+  turnIndex,
+  isDrawer,
+  tool,
+  color,
+  brushSize,
+  clearSignal,
+  undoSignal,
+}) {
   const canvasRef = useRef(null);
   const ctxRef = useRef(null);
   const strokesMapRef = useRef(new Map());
@@ -54,13 +63,20 @@ export default function DrawingCanvas({ roomCode, turnIndex, isDrawer, tool, col
       strokesMapRef.current.set(snap.key, snap.val());
       redraw();
     };
+    const handleRemoved = (snap) => {
+      strokesMapRef.current.delete(snap.key);
+      strokeOrderRef.current = strokeOrderRef.current.filter((k) => k !== snap.key);
+      redraw();
+    };
 
     onChildAdded(strokesRef, handleAdded);
     onChildChanged(strokesRef, handleChanged);
+    onChildRemoved(strokesRef, handleRemoved);
 
     return () => {
       off(strokesRef, "child_added", handleAdded);
       off(strokesRef, "child_changed", handleChanged);
+      off(strokesRef, "child_removed", handleRemoved);
     };
   }, [roomCode, turnIndex]);
 
@@ -232,6 +248,21 @@ export default function DrawingCanvas({ roomCode, turnIndex, isDrawer, tool, col
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clearSignal]);
+
+  // undo trigger from parent toolbar: removes the most recent action (stroke/fill/clear)
+  const lastUndoSignalRef = useRef(undoSignal);
+  useEffect(() => {
+    if (undoSignal !== lastUndoSignalRef.current) {
+      lastUndoSignalRef.current = undoSignal;
+      if (isDrawer && roomCode && turnIndex != null) {
+        const lastKey = strokeOrderRef.current[strokeOrderRef.current.length - 1];
+        if (lastKey) {
+          remove(ref(db, `rooms/${roomCode}/strokes/${turnIndex}/${lastKey}`));
+        }
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [undoSignal]);
 
   return (
     <div className="flex w-full justify-center overflow-hidden">
