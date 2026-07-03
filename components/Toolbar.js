@@ -29,10 +29,10 @@ export default function Toolbar({ tool, setTool, color, setColor, brushSize, set
             type="button"
             onClick={() => {
               setColor(c);
-              setTool("pen");
+              if (tool === "eraser") setTool("pen");
             }}
             className={`h-7 w-7 rounded-full border-2 transition ${
-              color === c && tool === "pen" ? "scale-110 border-violet-500" : "border-slate-200"
+              color === c && tool !== "eraser" ? "scale-110 border-violet-500" : "border-slate-200"
             }`}
             style={{ backgroundColor: c }}
             aria-label={`색상 ${c}`}
@@ -62,6 +62,27 @@ export default function Toolbar({ tool, setTool, color, setColor, brushSize, set
       </div>
 
       <div className="h-6 w-px bg-slate-200" />
+
+      <button
+        type="button"
+        onClick={() => setTool("pen")}
+        className={`rounded-full px-3 py-1.5 text-sm font-bold transition ${
+          tool === "pen" ? "bg-violet-500 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+        }`}
+      >
+        펜
+      </button>
+
+      <button
+        type="button"
+        onClick={() => setTool("fill")}
+        title="폐곡선 안을 클릭하면 선택한 색으로 채워져요"
+        className={`rounded-full px-3 py-1.5 text-sm font-bold transition ${
+          tool === "fill" ? "bg-violet-500 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+        }`}
+      >
+        🪣 채우기
+      </button>
 
       <button
         type="button"

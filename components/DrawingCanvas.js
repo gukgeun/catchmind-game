@@ -69,6 +69,10 @@ export default function DrawingCanvas({ roomCode, turnIndex, isDrawer, tool, col
       ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
       return;
     }
+    if (stroke.t === "fill") {
+      floodFill(ctx, Math.floor(stroke.x * CANVAS_WIDTH), Math.floor(stroke.y * CANVAS_HEIGHT), stroke.color);
+      return;
+    }
     const points = stroke.points || [];
     if (points.length === 0) return;
     ctx.strokeStyle = stroke.tool === "eraser" ? "#ffffff" : stroke.color || "#111827";
@@ -94,6 +98,65 @@ export default function DrawingCanvas({ roomCode, turnIndex, isDrawer, tool, col
     ctx.globalCompositeOperation = "source-over";
   }
 
+  function hexToRgb(hex) {
+    const n = parseInt(hex.replace("#", ""), 16);
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  }
+
+  const FILL_TOLERANCE = 32;
+
+  function floodFill(ctx, startX, startY, fillColorHex) {
+    if (startX < 0 || startY < 0 || startX >= CANVAS_WIDTH || startY >= CANVAS_HEIGHT) return;
+
+    const imageData = ctx.getImageData(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    const data = imageData.data;
+    const [fr, fg, fb] = hexToRgb(fillColorHex);
+    const startIdx = (startY * CANVAS_WIDTH + startX) * 4;
+    const tr = data[startIdx];
+    const tg = data[startIdx + 1];
+    const tb = data[startIdx + 2];
+    const ta = data[startIdx + 3];
+
+    const matchesTarget = (i) =>
+      Math.abs(data[i] - tr) <= FILL_TOLERANCE &&
+      Math.abs(data[i + 1] - tg) <= FILL_TOLERANCE &&
+      Math.abs(data[i + 2] - tb) <= FILL_TOLERANCE &&
+      Math.abs(data[i + 3] - ta) <= FILL_TOLERANCE;
+
+    // already filled with (roughly) this color: nothing to do
+    if (Math.abs(tr - fr) <= 4 && Math.abs(tg - fg) <= 4 && Math.abs(tb - fb) <= 4 && ta === 255) return;
+
+    const visited = new Uint8Array(CANVAS_WIDTH * CANVAS_HEIGHT);
+    const stack = [startY * CANVAS_WIDTH + startX];
+    visited[stack[0]] = 1;
+
+    while (stack.length) {
+      const pixelIdx = stack.pop();
+      const i = pixelIdx * 4;
+      data[i] = fr;
+      data[i + 1] = fg;
+      data[i + 2] = fb;
+      data[i + 3] = 255;
+
+      const x = pixelIdx % CANVAS_WIDTH;
+      const y = (pixelIdx / CANVAS_WIDTH) | 0;
+
+      const neighbors = [];
+      if (x > 0) neighbors.push(pixelIdx - 1);
+      if (x < CANVAS_WIDTH - 1) neighbors.push(pixelIdx + 1);
+      if (y > 0) neighbors.push(pixelIdx - CANVAS_WIDTH);
+      if (y < CANVAS_HEIGHT - 1) neighbors.push(pixelIdx + CANVAS_WIDTH);
+
+      for (const nIdx of neighbors) {
+        if (visited[nIdx]) continue;
+        visited[nIdx] = 1;
+        if (matchesTarget(nIdx * 4)) stack.push(nIdx);
+      }
+    }
+
+    ctx.putImageData(imageData, 0, 0);
+  }
+
   function getNormalizedPoint(e) {
     const canvas = canvasRef.current;
     const rect = canvas.getBoundingClientRect();
@@ -108,6 +171,13 @@ export default function DrawingCanvas({ roomCode, turnIndex, isDrawer, tool, col
     if (!isDrawer) return;
     e.preventDefault();
     const point = getNormalizedPoint(e);
+
+    if (tool === "fill") {
+      const strokesRef = ref(db, `rooms/${roomCode}/strokes/${turnIndex}`);
+      push(strokesRef, { t: "fill", x: point.x, y: point.y, color });
+      return;
+    }
+
     drawingRef.current = true;
     activePointsRef.current = [point];
 
@@ -168,7 +238,7 @@ export default function DrawingCanvas({ roomCode, turnIndex, isDrawer, tool, col
       <canvas
         ref={canvasRef}
         className={`block max-w-full rounded-2xl border-4 border-slate-200 bg-white shadow-inner ${
-          isDrawer ? "cursor-crosshair" : "cursor-not-allowed"
+          !isDrawer ? "cursor-not-allowed" : tool === "fill" ? "cursor-cell" : "cursor-crosshair"
         }`}
         style={{
           aspectRatio: `${CANVAS_WIDTH} / ${CANVAS_HEIGHT}`,
