@@ -348,7 +348,7 @@ export default function RoomClient({ code }) {
   const rightPlayers = playersSorted.slice(8, 16);
 
   return (
-    <div className="flex h-dvh flex-col overflow-hidden bg-gradient-to-br from-violet-100 via-fuchsia-50 to-orange-50">
+    <div className="flex min-h-dvh flex-col bg-gradient-to-br from-violet-100 via-fuchsia-50 to-orange-50">
       <header className="flex shrink-0 flex-wrap items-center justify-between gap-2 px-3 py-2 sm:px-4 sm:py-3">
         <div className="flex items-center gap-2">
           <span className="text-2xl">🎨</span>
@@ -401,8 +401,8 @@ export default function RoomClient({ code }) {
         </div>
       </header>
 
-      <main className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-3 pb-3 sm:px-4 sm:pb-4 md:flex-row md:overflow-hidden">
-        <aside className="order-2 shrink-0 md:order-1 md:h-full md:w-32 md:overflow-y-auto lg:w-40">
+      <main className="flex flex-1 flex-col gap-3 px-3 pb-3 sm:px-4 sm:pb-4 md:flex-row">
+        <aside className="order-2 shrink-0 md:order-1 md:w-32 lg:w-40">
           <ParticipantList
             players={leftPlayers}
             drawerUid={turn?.drawerUid}
@@ -411,7 +411,7 @@ export default function RoomClient({ code }) {
           />
         </aside>
 
-        <section className="order-1 flex min-h-0 flex-1 flex-col gap-3 md:order-2 md:h-full">
+        <section className="order-1 flex flex-1 flex-col gap-3 md:order-2">
           {meta.status === "waiting" ? (
             <LobbyPanel isHost={isHost} playerCount={playersSorted.length} />
           ) : (
@@ -455,7 +455,7 @@ export default function RoomClient({ code }) {
           </div>
         </section>
 
-        <aside className="order-3 shrink-0 md:h-full md:w-32 md:overflow-y-auto lg:w-40">
+        <aside className="order-3 shrink-0 md:w-32 lg:w-40">
           <ParticipantList
             players={rightPlayers}
             drawerUid={turn?.drawerUid}
