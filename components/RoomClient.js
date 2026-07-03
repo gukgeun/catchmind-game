@@ -401,7 +401,7 @@ export default function RoomClient({ code }) {
       </header>
 
       <main className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-3 pb-3 sm:px-4 sm:pb-4 md:flex-row md:overflow-hidden">
-        <aside className="order-2 shrink-0 md:order-1 md:h-full md:w-40 md:overflow-y-auto lg:w-56">
+        <aside className="order-2 shrink-0 md:order-1 md:h-full md:w-32 md:overflow-y-auto lg:w-40">
           <ParticipantList
             players={leftPlayers}
             drawerUid={turn?.drawerUid}
@@ -438,7 +438,7 @@ export default function RoomClient({ code }) {
               </div>
             </>
           )}
-          <div className="min-h-[14rem] shrink-0 md:min-h-0 md:flex-1">
+          <div className="h-40 shrink-0 sm:h-44 md:h-36 lg:h-44">
             <ChatPanel
               roomCode={code}
               turnIndex={turn?.turnIndex ?? 0}
@@ -452,7 +452,7 @@ export default function RoomClient({ code }) {
           </div>
         </section>
 
-        <aside className="order-3 shrink-0 md:h-full md:w-40 md:overflow-y-auto lg:w-56">
+        <aside className="order-3 shrink-0 md:h-full md:w-32 md:overflow-y-auto lg:w-40">
           <ParticipantList
             players={rightPlayers}
             drawerUid={turn?.drawerUid}

@@ -173,7 +173,7 @@ export default function DrawingCanvas({ roomCode, turnIndex, isDrawer, tool, col
         style={{
           aspectRatio: `${CANVAS_WIDTH} / ${CANVAS_HEIGHT}`,
           width: "100%",
-          maxHeight: "52vh",
+          maxHeight: "62vh",
           touchAction: "none",
         }}
         onPointerDown={handlePointerDown}
