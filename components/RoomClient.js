@@ -22,13 +22,12 @@ import {
   REVEAL_DELAY_MS,
   HOST_FALLBACK_GRACE_MS,
   DIFFICULTY_LABELS,
-  pickDifficulty,
   isCorrectGuess,
   sortPlayersByOrder,
   pickNextDrawerUid,
   computeWinners,
 } from "@/lib/gameConfig";
-import { getRandomWord } from "@/lib/wordList";
+import { getRandomWordWithDifficulty } from "@/lib/wordList";
 import DrawingCanvas from "@/components/DrawingCanvas";
 import Toolbar from "@/components/Toolbar";
 import ParticipantList from "@/components/ParticipantList";
@@ -98,6 +97,13 @@ export default function RoomClient({ code }) {
   const isDrawer = Boolean(uid && turn && uid === turn.drawerUid);
   const isPlaying = meta?.status === "playing" && turn;
   const isEnded = meta?.status === "ended";
+  const isClassMode = meta?.mode === "class";
+  const eligiblePlayers = useMemo(
+    () => (isClassMode ? playersSorted.filter((p) => p.uid !== meta?.hostUid) : playersSorted),
+    [playersSorted, isClassMode, meta?.hostUid]
+  );
+  const isHostOnlyModerator = isClassMode && isHost;
+  const isWaitingForWord = Boolean(isClassMode && turn && !turn.ended && turn.wordLength == null);
 
   // --- fetch the secret word: security rules only allow the current drawer to read this path ---
   useEffect(() => {
@@ -113,7 +119,7 @@ export default function RoomClient({ code }) {
 
   // --- drawer authority: watch chat for correct guesses + timer expiry ---
   useEffect(() => {
-    if (!isDrawer || !turn || turn.ended || !secretWord) {
+    if (!isDrawer || !turn || turn.ended || !secretWord || !turn.startedAt) {
       endedRef.current = turn?.ended ?? false;
       return;
     }
@@ -162,6 +168,8 @@ export default function RoomClient({ code }) {
   useEffect(() => {
     if (!turn || !turn.ended || meta?.status !== "playing") return;
 
+    const classMode = meta.mode === "class";
+
     // one full round (every player got a turn) has been completed: end the game
     if (meta.roundLength && turn.turnIndex >= meta.roundLength) {
       if (uid !== meta.hostUid) return;
@@ -170,7 +178,7 @@ export default function RoomClient({ code }) {
         const current = snap.val();
         if (!current || current.status !== "playing") return; // already finalized
         const freshPlayersSnap = await get(ref(db, `rooms/${code}/players`));
-        const winners = computeWinners(freshPlayersSnap.val() || {});
+        const winners = computeWinners(freshPlayersSnap.val() || {}, classMode ? meta.hostUid : undefined);
         await update(ref(db, `rooms/${code}/meta`), {
           status: "ended",
           winnerNames: winners.map((w) => w.name).join(", "),
@@ -180,7 +188,7 @@ export default function RoomClient({ code }) {
       return () => clearTimeout(timer);
     }
 
-    const nextDrawerUid = pickNextDrawerUid(players, turn.drawerUid);
+    const nextDrawerUid = pickNextDrawerUid(players, turn.drawerUid, classMode ? meta.hostUid : undefined);
     if (!nextDrawerUid) return;
 
     function nextTurnSkeleton(drawerUid) {
@@ -188,7 +196,7 @@ export default function RoomClient({ code }) {
         drawerUid,
         wordLength: null,
         difficulty: null,
-        startedAt: Date.now() + serverOffsetRef.current,
+        startedAt: classMode ? null : Date.now() + serverOffsetRef.current,
         durationMs: TURN_DURATION_MS,
         turnIndex: turn.turnIndex + 1,
         ended: false,
@@ -224,7 +232,11 @@ export default function RoomClient({ code }) {
           const current = snap.val();
           if (!current || current.turnIndex !== turn.turnIndex) return; // already advanced
           const freshPlayersSnap = await get(ref(db, `rooms/${code}/players`));
-          const fallbackDrawer = pickNextDrawerUid(freshPlayersSnap.val() || {}, turn.drawerUid);
+          const fallbackDrawer = pickNextDrawerUid(
+            freshPlayersSnap.val() || {},
+            turn.drawerUid,
+            classMode ? meta.hostUid : undefined
+          );
           if (!fallbackDrawer) return;
           advanceTurn(fallbackDrawer);
         }, REVEAL_DELAY_MS + HOST_FALLBACK_GRACE_MS)
@@ -236,18 +248,18 @@ export default function RoomClient({ code }) {
       timers.forEach(clearTimeout);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [turn?.ended, turn?.turnIndex, meta?.status, meta?.roundLength, code]);
+  }, [turn?.ended, turn?.turnIndex, meta?.status, meta?.roundLength, meta?.mode, code]);
 
   // --- whenever this client becomes the drawer for a turn with no word chosen yet, pick one ---
   useEffect(() => {
     if (!isDrawer || !turn || turn.ended || turn.wordLength != null) return;
-    const difficulty = pickDifficulty();
-    const word = getRandomWord(difficulty);
+    if (isClassMode) return; // the moderator inputs the word manually instead
+    const { word, difficulty } = getRandomWordWithDifficulty();
     update(ref(db, `secretWords/${code}`), { word }).then(() => {
       update(ref(db, `rooms/${code}/turn`), { wordLength: word.length, difficulty });
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isDrawer, turn?.turnIndex, turn?.ended, turn?.wordLength, code]);
+  }, [isDrawer, turn?.turnIndex, turn?.ended, turn?.wordLength, isClassMode, code]);
 
   async function handleJoinInline(e) {
     e.preventDefault();
@@ -270,15 +282,18 @@ export default function RoomClient({ code }) {
   }
 
   async function handleStartGame() {
-    if (!isHost || playersSorted.length < 2) return;
-    const roundLength = playersSorted.filter((p) => p.online).length || playersSorted.length;
-    // the host always draws first turn 1, since a player can only write their own
-    // secret word once security rules recognize them as the current drawer
+    if (!isHost || eligiblePlayers.length < 2) return;
+    const roundLength = eligiblePlayers.filter((p) => p.online).length || eligiblePlayers.length;
+    // in normal mode the host always draws first turn 1, since a player can only write
+    // their own secret word once security rules recognize them as the current drawer;
+    // in class mode the host is a moderator and never draws
+    const firstDrawerUid = isClassMode ? pickNextDrawerUid(players, null, meta.hostUid) : uid;
+    if (!firstDrawerUid) return;
     await update(ref(db, `rooms/${code}/turn`), {
-      drawerUid: uid,
+      drawerUid: firstDrawerUid,
       wordLength: null,
       difficulty: null,
-      startedAt: Date.now() + serverOffsetRef.current,
+      startedAt: isClassMode ? null : Date.now() + serverOffsetRef.current,
       durationMs: TURN_DURATION_MS,
       turnIndex: 1,
       ended: false,
@@ -291,6 +306,24 @@ export default function RoomClient({ code }) {
       roundLength,
       winnerNames: null,
       winnerScore: null,
+    });
+  }
+
+  async function handleSetMode(mode) {
+    if (!isHost || meta?.status !== "waiting") return;
+    await update(ref(db, `rooms/${code}/meta`), { mode });
+  }
+
+  async function handleSubmitWord(word) {
+    if (!isHost || !isClassMode || !turn || turn.ended || turn.wordLength != null) return;
+    const trimmed = word.trim();
+    if (!trimmed) return;
+    await update(ref(db, `secretWords/${code}`), { word: trimmed });
+    await update(ref(db, `rooms/${code}/turn`), {
+      wordLength: trimmed.length,
+      difficulty: null,
+      startedAt: Date.now() + serverOffsetRef.current,
+      durationMs: TURN_DURATION_MS,
     });
   }
 
@@ -390,8 +423,9 @@ export default function RoomClient({ code }) {
     );
   }
 
-  const leftPlayers = playersSorted.slice(0, 8);
-  const rightPlayers = playersSorted.slice(8, 16);
+  const halfCapacity = Math.ceil(MAX_PLAYERS / 2);
+  const leftPlayers = playersSorted.slice(0, halfCapacity);
+  const rightPlayers = playersSorted.slice(halfCapacity, MAX_PLAYERS);
 
   return (
     <div className="flex min-h-dvh flex-col bg-gradient-to-br from-violet-100 via-fuchsia-50 to-orange-50">
@@ -410,7 +444,14 @@ export default function RoomClient({ code }) {
           </span>
         </div>
 
-        <WordBanner turn={turn} isDrawer={isDrawer} isPlaying={isPlaying} isEnded={isEnded} secretWord={secretWord} />
+        <WordBanner
+          turn={turn}
+          isDrawer={isDrawer}
+          isPlaying={isPlaying}
+          isEnded={isEnded}
+          secretWord={secretWord}
+          isClassMode={isClassMode}
+        />
 
         <div className="flex items-center gap-2">
           {turn && meta.status === "playing" && (
@@ -424,7 +465,7 @@ export default function RoomClient({ code }) {
           {isHost && meta.status === "waiting" && (
             <button
               onClick={handleStartGame}
-              disabled={playersSorted.length < 2}
+              disabled={eligiblePlayers.length < 2}
               className="rounded-full bg-emerald-500 px-4 py-2 text-sm font-black text-white shadow hover:brightness-110 disabled:opacity-40"
             >
               게임 시작
@@ -453,13 +494,18 @@ export default function RoomClient({ code }) {
             players={leftPlayers}
             drawerUid={turn?.drawerUid}
             hostUid={meta.hostUid}
-            emptySlots={Math.max(0, 8 - leftPlayers.length)}
+            emptySlots={Math.max(0, halfCapacity - leftPlayers.length)}
           />
         </aside>
 
         <section className="order-1 flex flex-1 flex-col gap-3 md:order-2">
           {meta.status === "waiting" ? (
-            <LobbyPanel isHost={isHost} playerCount={playersSorted.length} />
+            <LobbyPanel
+              isHost={isHost}
+              playerCount={playersSorted.length}
+              mode={meta.mode}
+              onSetMode={handleSetMode}
+            />
           ) : meta.status === "ended" ? (
             <EndedPanel
               winnerNames={meta.winnerNames}
@@ -468,6 +514,8 @@ export default function RoomClient({ code }) {
               isHost={isHost}
               onRestart={handleRestart}
             />
+          ) : isWaitingForWord ? (
+            <ClassWordInputPanel isHost={isHost} onSubmit={handleSubmitWord} />
           ) : (
             <>
               <Toolbar
@@ -501,9 +549,17 @@ export default function RoomClient({ code }) {
               turnIndex={turn?.turnIndex ?? 0}
               uid={uid}
               name={players[uid]?.name}
-              disabled={!isPlaying || isDrawer || turn?.ended}
+              disabled={!isPlaying || isDrawer || turn?.ended || isHostOnlyModerator || isWaitingForWord}
               disabledReason={
-                isDrawer ? "출제자는 채팅으로 정답을 보낼 수 없어요" : !isPlaying ? "게임 대기 중" : ""
+                isHostOnlyModerator
+                  ? "진행자는 채팅에 참여할 수 없어요"
+                  : isDrawer
+                  ? "출제자는 채팅으로 정답을 보낼 수 없어요"
+                  : isWaitingForWord
+                  ? "진행자가 제시어를 입력하는 중이에요"
+                  : !isPlaying
+                  ? "게임 대기 중"
+                  : ""
               }
             />
           </div>
@@ -514,7 +570,7 @@ export default function RoomClient({ code }) {
             players={rightPlayers}
             drawerUid={turn?.drawerUid}
             hostUid={meta.hostUid}
-            emptySlots={Math.max(0, 8 - rightPlayers.length)}
+            emptySlots={Math.max(0, MAX_PLAYERS - halfCapacity - rightPlayers.length)}
           />
         </aside>
       </main>
@@ -522,7 +578,7 @@ export default function RoomClient({ code }) {
   );
 }
 
-function WordBanner({ turn, isDrawer, isPlaying, isEnded, secretWord }) {
+function WordBanner({ turn, isDrawer, isPlaying, isEnded, secretWord, isClassMode }) {
   if (isEnded) {
     return <div className="text-sm font-bold text-amber-500">🏆 게임 종료</div>;
   }
@@ -541,7 +597,7 @@ function WordBanner({ turn, isDrawer, isPlaying, isEnded, secretWord }) {
   if (turn.wordLength == null) {
     return (
       <div className="rounded-full bg-white px-4 py-1.5 text-sm font-bold text-slate-400 shadow">
-        출제자가 단어를 고르는 중...
+        {isClassMode ? "진행자가 제시어를 입력하는 중..." : "출제자가 단어를 고르는 중..."}
       </div>
     );
   }
@@ -551,7 +607,9 @@ function WordBanner({ turn, isDrawer, isPlaying, isEnded, secretWord }) {
   if (isDrawer) {
     return (
       <div className="flex items-center gap-2 rounded-full bg-violet-100 px-4 py-1.5 text-sm font-black text-violet-700">
-        <span className="rounded-full bg-violet-500 px-2 py-0.5 text-xs text-white">{diffLabel}</span>
+        {diffLabel && (
+          <span className="rounded-full bg-violet-500 px-2 py-0.5 text-xs text-white">{diffLabel}</span>
+        )}
         {secretWord ?? "..."}
       </div>
     );
@@ -559,14 +617,62 @@ function WordBanner({ turn, isDrawer, isPlaying, isEnded, secretWord }) {
 
   return (
     <div className="flex items-center gap-2 rounded-full bg-white px-4 py-1.5 text-sm font-black text-slate-600 shadow">
-      <span className="rounded-full bg-slate-300 px-2 py-0.5 text-xs text-white">{diffLabel}</span>
+      {diffLabel && (
+        <span className="rounded-full bg-slate-300 px-2 py-0.5 text-xs text-white">{diffLabel}</span>
+      )}
       {"█ ".repeat(turn.wordLength).trim()}
       <span className="text-xs font-semibold text-slate-400">({turn.wordLength}자)</span>
     </div>
   );
 }
 
-function LobbyPanel({ isHost, playerCount }) {
+function ClassWordInputPanel({ isHost, onSubmit }) {
+  const [value, setValue] = useState("");
+
+  if (!isHost) {
+    return (
+      <div className="flex flex-1 flex-col items-center justify-center gap-3 rounded-2xl bg-white/80 p-10 text-center shadow-inner">
+        <div className="text-4xl">✏️</div>
+        <p className="text-sm font-bold text-slate-500">진행자가 제시어를 입력하고 있어요...</p>
+      </div>
+    );
+  }
+
+  function handleSubmit(e) {
+    e.preventDefault();
+    const trimmed = value.trim();
+    if (!trimmed) return;
+    onSubmit(trimmed);
+    setValue("");
+  }
+
+  return (
+    <div className="flex flex-1 flex-col items-center justify-center gap-3 rounded-2xl bg-white/80 p-10 text-center shadow-inner">
+      <div className="text-4xl">📝</div>
+      <h2 className="text-lg font-black text-slate-700">이번 턴 제시어를 입력해주세요</h2>
+      <form onSubmit={handleSubmit} className="flex w-full max-w-xs gap-2">
+        <input
+          type="text"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          placeholder="제시어 입력"
+          autoFocus
+          className="flex-1 rounded-xl border-2 border-slate-200 px-4 py-2.5 text-center text-base font-medium outline-none focus:border-violet-400"
+        />
+        <button
+          type="submit"
+          disabled={!value.trim()}
+          className="rounded-xl bg-gradient-to-r from-violet-500 to-fuchsia-500 px-4 py-2.5 text-sm font-black text-white shadow hover:brightness-110 disabled:opacity-40"
+        >
+          확인
+        </button>
+      </form>
+    </div>
+  );
+}
+
+function LobbyPanel({ isHost, playerCount, mode, onSetMode }) {
+  const isClassMode = mode === "class";
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-3 rounded-2xl bg-white/80 p-10 text-center shadow-inner">
       <div className="text-5xl">🖌️</div>
@@ -574,6 +680,32 @@ function LobbyPanel({ isHost, playerCount }) {
       <p className="text-sm text-slate-500">
         현재 {playerCount}명 참가 중 (최소 2명 필요)
       </p>
+
+      {isHost ? (
+        <div className="flex items-center gap-1 rounded-full bg-slate-100 p-1">
+          <button
+            onClick={() => onSetMode("normal")}
+            className={`rounded-full px-4 py-2 text-sm font-black transition ${
+              !isClassMode ? "bg-violet-500 text-white shadow" : "text-slate-500"
+            }`}
+          >
+            일반모드
+          </button>
+          <button
+            onClick={() => onSetMode("class")}
+            className={`rounded-full px-4 py-2 text-sm font-black transition ${
+              isClassMode ? "bg-violet-500 text-white shadow" : "text-slate-500"
+            }`}
+          >
+            수업모드
+          </button>
+        </div>
+      ) : (
+        <p className="text-xs font-semibold text-slate-400">
+          {isClassMode ? "수업모드: 방장이 매 턴 제시어를 입력해요" : "일반모드"}
+        </p>
+      )}
+
       {isHost ? (
         <p className="text-sm font-semibold text-violet-500">우측 상단의 &apos;게임 시작&apos; 버튼을 눌러주세요</p>
       ) : (

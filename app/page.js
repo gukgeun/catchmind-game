@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuthUser } from "@/lib/useAuthUser";
 import { createRoom, joinRoom, RoomError } from "@/lib/roomService";
+import { MAX_PLAYERS } from "@/lib/gameConfig";
 
 export default function HomePage() {
   const router = useRouter();
@@ -156,7 +157,7 @@ export default function HomePage() {
         </form>
 
         <p className="mt-6 text-center text-xs text-slate-400">
-          최대 16명까지 함께 플레이할 수 있어요
+          최대 {MAX_PLAYERS}명까지 함께 플레이할 수 있어요
         </p>
       </div>
     </main>

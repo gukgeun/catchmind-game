@@ -13,7 +13,7 @@
     "secretWords": {
       "$roomCode": {
         ".read": "auth != null && auth.uid == root.child('rooms/' + $roomCode + '/turn/drawerUid').val()",
-        ".write": "auth != null && auth.uid == root.child('rooms/' + $roomCode + '/turn/drawerUid').val()"
+        ".write": "auth != null && (auth.uid == root.child('rooms/' + $roomCode + '/turn/drawerUid').val() || (root.child('rooms/' + $roomCode + '/meta/mode').val() == 'class' && auth.uid == root.child('rooms/' + $roomCode + '/meta/hostUid').val()))"
       }
     }
   }
