@@ -103,7 +103,11 @@ export default function RoomClient({ code }) {
     [playersSorted, isClassMode, meta?.hostUid]
   );
   const isHostOnlyModerator = isClassMode && isHost;
-  const isWaitingForWord = Boolean(isClassMode && turn && !turn.ended && turn.wordLength == null);
+  const isHostPick = isClassMode && meta?.drawerMode === "host-pick";
+  const isWaitingForDrawer = Boolean(isHostPick && turn && !turn.ended && turn.drawerUid == null);
+  const isWaitingForWord = Boolean(
+    isClassMode && turn && !turn.ended && turn.drawerUid != null && turn.wordLength == null
+  );
 
   // --- fetch the secret word: security rules only allow the current drawer to read this path ---
   useEffect(() => {
@@ -169,16 +173,18 @@ export default function RoomClient({ code }) {
     if (!turn || !turn.ended || meta?.status !== "playing") return;
 
     const classMode = meta.mode === "class";
+    const hostPick = classMode && meta.drawerMode === "host-pick";
 
-    // one full round (every player got a turn) has been completed: end the game
-    if (meta.roundLength && turn.turnIndex >= meta.roundLength) {
+    // one full round (every player got a turn) has been completed: end the game.
+    // class mode never auto-ends this way — it cycles indefinitely until the host ends it.
+    if (!classMode && meta.roundLength && turn.turnIndex >= meta.roundLength) {
       if (uid !== meta.hostUid) return;
       const timer = setTimeout(async () => {
         const snap = await get(ref(db, `rooms/${code}/meta`));
         const current = snap.val();
         if (!current || current.status !== "playing") return; // already finalized
         const freshPlayersSnap = await get(ref(db, `rooms/${code}/players`));
-        const winners = computeWinners(freshPlayersSnap.val() || {}, classMode ? meta.hostUid : undefined);
+        const winners = computeWinners(freshPlayersSnap.val() || {});
         await update(ref(db, `rooms/${code}/meta`), {
           status: "ended",
           winnerNames: winners.map((w) => w.name).join(", "),
@@ -187,9 +193,6 @@ export default function RoomClient({ code }) {
       }, REVEAL_DELAY_MS);
       return () => clearTimeout(timer);
     }
-
-    const nextDrawerUid = pickNextDrawerUid(players, turn.drawerUid, classMode ? meta.hostUid : undefined);
-    if (!nextDrawerUid) return;
 
     function nextTurnSkeleton(drawerUid) {
       return {
@@ -212,6 +215,19 @@ export default function RoomClient({ code }) {
         return nextTurnSkeleton(drawerUid);
       });
     }
+
+    // host-pick mode: nobody is auto-selected — the host writes a "drawer not chosen yet"
+    // turn skeleton and picks the next drawer manually from the UI
+    if (hostPick) {
+      if (uid !== meta.hostUid) return;
+      const timer = setTimeout(() => {
+        advanceTurn(null);
+      }, REVEAL_DELAY_MS);
+      return () => clearTimeout(timer);
+    }
+
+    const nextDrawerUid = pickNextDrawerUid(players, turn.drawerUid, classMode ? meta.hostUid : undefined);
+    if (!nextDrawerUid) return;
 
     let cancelled = false;
     const timers = [];
@@ -248,7 +264,7 @@ export default function RoomClient({ code }) {
       timers.forEach(clearTimeout);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [turn?.ended, turn?.turnIndex, meta?.status, meta?.roundLength, meta?.mode, code]);
+  }, [turn?.ended, turn?.turnIndex, meta?.status, meta?.roundLength, meta?.mode, meta?.drawerMode, code]);
 
   // --- whenever this client becomes the drawer for a turn with no word chosen yet, pick one ---
   useEffect(() => {
@@ -283,12 +299,25 @@ export default function RoomClient({ code }) {
 
   async function handleStartGame() {
     if (!isHost || eligiblePlayers.length < 2) return;
-    const roundLength = eligiblePlayers.filter((p) => p.online).length || eligiblePlayers.length;
+    const hostPick = isClassMode && meta.drawerMode === "host-pick";
+
     // in normal mode the host always draws first turn 1, since a player can only write
     // their own secret word once security rules recognize them as the current drawer;
     // in class mode the host is a moderator and never draws
-    const firstDrawerUid = isClassMode ? pickNextDrawerUid(players, null, meta.hostUid) : uid;
-    if (!firstDrawerUid) return;
+    let firstDrawerUid;
+    if (hostPick) {
+      firstDrawerUid = null; // host picks the first drawer from the UI
+    } else if (isClassMode) {
+      firstDrawerUid = pickNextDrawerUid(players, null, meta.hostUid);
+      if (!firstDrawerUid) return;
+    } else {
+      firstDrawerUid = uid;
+    }
+
+    const roundLength = isClassMode
+      ? null // class mode cycles indefinitely; no fixed round length
+      : eligiblePlayers.filter((p) => p.online).length || eligiblePlayers.length;
+
     await update(ref(db, `rooms/${code}/turn`), {
       drawerUid: firstDrawerUid,
       wordLength: null,
@@ -314,8 +343,19 @@ export default function RoomClient({ code }) {
     await update(ref(db, `rooms/${code}/meta`), { mode });
   }
 
+  async function handleSetDrawerMode(drawerMode) {
+    if (!isHost || meta?.status !== "waiting") return;
+    await update(ref(db, `rooms/${code}/meta`), { drawerMode });
+  }
+
+  async function handlePickDrawer(drawerUid) {
+    if (!isHost || !isHostPick || !turn || turn.ended || turn.drawerUid != null) return;
+    await update(ref(db, `rooms/${code}/turn`), { drawerUid });
+  }
+
   async function handleSubmitWord(word) {
     if (!isHost || !isClassMode || !turn || turn.ended || turn.wordLength != null) return;
+    if (turn.drawerUid == null) return;
     const trimmed = word.trim();
     if (!trimmed) return;
     await update(ref(db, `secretWords/${code}`), { word: trimmed });
@@ -329,11 +369,13 @@ export default function RoomClient({ code }) {
 
   async function handleEndGame() {
     if (!isHost) return;
+    const freshPlayersSnap = await get(ref(db, `rooms/${code}/players`));
+    const winners = computeWinners(freshPlayersSnap.val() || {}, isClassMode ? meta.hostUid : undefined);
     await update(ref(db, `rooms/${code}/meta`), {
-      status: "waiting",
+      status: "ended",
       roundLength: null,
-      winnerNames: null,
-      winnerScore: null,
+      winnerNames: winners.map((w) => w.name).join(", "),
+      winnerScore: winners[0]?.score ?? 0,
     });
   }
 
@@ -451,6 +493,7 @@ export default function RoomClient({ code }) {
           isEnded={isEnded}
           secretWord={secretWord}
           isClassMode={isClassMode}
+          isHostPick={isHostPick}
         />
 
         <div className="flex items-center gap-2">
@@ -505,15 +548,19 @@ export default function RoomClient({ code }) {
               playerCount={playersSorted.length}
               mode={meta.mode}
               onSetMode={handleSetMode}
+              drawerMode={meta.drawerMode}
+              onSetDrawerMode={handleSetDrawerMode}
             />
           ) : meta.status === "ended" ? (
             <EndedPanel
               winnerNames={meta.winnerNames}
               winnerScore={meta.winnerScore}
-              players={playersSorted}
+              players={eligiblePlayers}
               isHost={isHost}
               onRestart={handleRestart}
             />
+          ) : isWaitingForDrawer ? (
+            <DrawerPickPanel isHost={isHost} players={eligiblePlayers} onPick={handlePickDrawer} />
           ) : isWaitingForWord ? (
             <ClassWordInputPanel isHost={isHost} onSubmit={handleSubmitWord} />
           ) : (
@@ -549,12 +596,21 @@ export default function RoomClient({ code }) {
               turnIndex={turn?.turnIndex ?? 0}
               uid={uid}
               name={players[uid]?.name}
-              disabled={!isPlaying || isDrawer || turn?.ended || isHostOnlyModerator || isWaitingForWord}
+              disabled={
+                !isPlaying ||
+                isDrawer ||
+                turn?.ended ||
+                isHostOnlyModerator ||
+                isWaitingForDrawer ||
+                isWaitingForWord
+              }
               disabledReason={
                 isHostOnlyModerator
                   ? "진행자는 채팅에 참여할 수 없어요"
                   : isDrawer
                   ? "출제자는 채팅으로 정답을 보낼 수 없어요"
+                  : isWaitingForDrawer
+                  ? "진행자가 그릴 사람을 고르는 중이에요"
                   : isWaitingForWord
                   ? "진행자가 제시어를 입력하는 중이에요"
                   : !isPlaying
@@ -578,7 +634,7 @@ export default function RoomClient({ code }) {
   );
 }
 
-function WordBanner({ turn, isDrawer, isPlaying, isEnded, secretWord, isClassMode }) {
+function WordBanner({ turn, isDrawer, isPlaying, isEnded, secretWord, isClassMode, isHostPick }) {
   if (isEnded) {
     return <div className="text-sm font-bold text-amber-500">🏆 게임 종료</div>;
   }
@@ -590,6 +646,14 @@ function WordBanner({ turn, isDrawer, isPlaying, isEnded, secretWord, isClassMod
     return (
       <div className="flex items-center gap-2 rounded-full bg-amber-100 px-4 py-1.5 text-sm font-black text-amber-700">
         {turn.endedReason === "correct" ? "🎉 정답:" : "⏰ 시간 종료! 정답:"} {turn.revealedWord}
+      </div>
+    );
+  }
+
+  if (isHostPick && turn.drawerUid == null) {
+    return (
+      <div className="rounded-full bg-white px-4 py-1.5 text-sm font-bold text-slate-400 shadow">
+        진행자가 그릴 사람을 고르는 중...
       </div>
     );
   }
@@ -671,8 +735,38 @@ function ClassWordInputPanel({ isHost, onSubmit }) {
   );
 }
 
-function LobbyPanel({ isHost, playerCount, mode, onSetMode }) {
+function DrawerPickPanel({ isHost, players, onPick }) {
+  if (!isHost) {
+    return (
+      <div className="flex flex-1 flex-col items-center justify-center gap-3 rounded-2xl bg-white/80 p-10 text-center shadow-inner">
+        <div className="text-4xl">🙋</div>
+        <p className="text-sm font-bold text-slate-500">진행자가 다음에 그릴 사람을 고르고 있어요...</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-1 flex-col items-center justify-center gap-3 rounded-2xl bg-white/80 p-10 text-center shadow-inner">
+      <div className="text-4xl">🙋</div>
+      <h2 className="text-lg font-black text-slate-700">이번 턴 그릴 사람을 선택해주세요</h2>
+      <div className="flex max-w-md flex-wrap items-center justify-center gap-2">
+        {players.map((p) => (
+          <button
+            key={p.uid}
+            onClick={() => onPick(p.uid)}
+            className="rounded-full bg-white px-4 py-2 text-sm font-bold text-slate-700 shadow hover:bg-violet-100 hover:text-violet-700"
+          >
+            {p.name}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function LobbyPanel({ isHost, playerCount, mode, onSetMode, drawerMode, onSetDrawerMode }) {
   const isClassMode = mode === "class";
+  const isHostPick = drawerMode === "host-pick";
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-3 rounded-2xl bg-white/80 p-10 text-center shadow-inner">
       <div className="text-5xl">🖌️</div>
@@ -705,6 +799,32 @@ function LobbyPanel({ isHost, playerCount, mode, onSetMode }) {
           {isClassMode ? "수업모드: 방장이 매 턴 제시어를 입력해요" : "일반모드"}
         </p>
       )}
+
+      {isClassMode &&
+        (isHost ? (
+          <div className="flex items-center gap-1 rounded-full bg-slate-100 p-1">
+            <button
+              onClick={() => onSetDrawerMode("sequential")}
+              className={`rounded-full px-4 py-2 text-sm font-black transition ${
+                !isHostPick ? "bg-violet-500 text-white shadow" : "text-slate-500"
+              }`}
+            >
+              순서대로 진행하기
+            </button>
+            <button
+              onClick={() => onSetDrawerMode("host-pick")}
+              className={`rounded-full px-4 py-2 text-sm font-black transition ${
+                isHostPick ? "bg-violet-500 text-white shadow" : "text-slate-500"
+              }`}
+            >
+              진행자가 선택하기
+            </button>
+          </div>
+        ) : (
+          <p className="text-xs font-semibold text-slate-400">
+            {isHostPick ? "그릴 사람: 방장이 매 턴 지정해요" : "그릴 사람: 순서대로 돌아가요"}
+          </p>
+        ))}
 
       {isHost ? (
         <p className="text-sm font-semibold text-violet-500">우측 상단의 &apos;게임 시작&apos; 버튼을 눌러주세요</p>
