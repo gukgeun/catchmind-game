@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuthUser } from "@/lib/useAuthUser";
 import { createRoom, joinRoom, RoomError } from "@/lib/roomService";
@@ -16,9 +16,11 @@ export default function HomePage() {
   const [mode, setMode] = useState("create");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const submittingRef = useRef(false);
 
   async function handleSubmit(e) {
     e.preventDefault();
+    if (submittingRef.current) return;
     setError("");
 
     const trimmedName = nickname.trim();
@@ -36,6 +38,7 @@ export default function HomePage() {
     }
 
     window.localStorage.setItem("catchmind-nickname", trimmedName);
+    submittingRef.current = true;
     setBusy(true);
     try {
       if (mode === "create") {
@@ -45,6 +48,7 @@ export default function HomePage() {
         const trimmedCode = roomCode.trim();
         if (!trimmedCode) {
           setError("방 코드를 입력해주세요.");
+          submittingRef.current = false;
           setBusy(false);
           return;
         }
@@ -58,6 +62,7 @@ export default function HomePage() {
         setError("문제가 발생했습니다. 다시 시도해주세요.");
         console.error(err);
       }
+      submittingRef.current = false;
       setBusy(false);
     }
   }

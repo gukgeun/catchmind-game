@@ -41,6 +41,7 @@ export default function RoomClient({ code }) {
 
   const [meta, setMeta] = useState(undefined); // undefined = loading, null = not found
   const [players, setPlayers] = useState({});
+  const [playersLoaded, setPlayersLoaded] = useState(false);
   const [turn, setTurn] = useState(null);
   const [secretWord, setSecretWord] = useState(null);
 
@@ -49,6 +50,7 @@ export default function RoomClient({ code }) {
   );
   const [joining, setJoining] = useState(false);
   const [joinError, setJoinError] = useState("");
+  const joiningRef = useRef(false);
   const [copied, setCopied] = useState(false);
 
   const [tool, setTool] = useState("pen");
@@ -70,7 +72,10 @@ export default function RoomClient({ code }) {
     const turnRef = ref(db, `rooms/${code}/turn`);
 
     const handleMeta = (snap) => setMeta(snap.exists() ? snap.val() : null);
-    const handlePlayers = (snap) => setPlayers(snap.val() || {});
+    const handlePlayers = (snap) => {
+      setPlayers(snap.val() || {});
+      setPlayersLoaded(true);
+    };
     const handleTurn = (snap) => setTurn(snap.exists() ? snap.val() : null);
 
     onValue(metaRef, handleMeta);
@@ -279,6 +284,7 @@ export default function RoomClient({ code }) {
 
   async function handleJoinInline(e) {
     e.preventDefault();
+    if (joiningRef.current) return;
     setJoinError("");
     const trimmed = nickname.trim();
     if (!trimmed) {
@@ -287,12 +293,14 @@ export default function RoomClient({ code }) {
     }
     if (!uid) return;
     window.localStorage.setItem("catchmind-nickname", trimmed);
+    joiningRef.current = true;
     setJoining(true);
     try {
       await joinRoom(code, uid, trimmed);
     } catch (err) {
       setJoinError(err instanceof RoomError ? err.message : "참가에 실패했습니다.");
     } finally {
+      joiningRef.current = false;
       setJoining(false);
     }
   }
@@ -424,7 +432,7 @@ export default function RoomClient({ code }) {
     );
   }
 
-  if (authLoading || meta === undefined) {
+  if (authLoading || meta === undefined || !playersLoaded) {
     return (
       <NoticeScreen emoji="⏳" title="불러오는 중..." description="게임 방에 연결하고 있어요." />
     );
